@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 
-const SUPABASE_URL = "https://xfyurttqlutukzowfidd.supabase.co";
-const SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InhmeXVydHRxbHV0dWt6b3dmaWRkIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzExODIzNTUsImV4cCI6MjA4Njc1ODM1NX0.fk5uOgO0Csgme75-CIJd94kzNvsYUaKhxUUhIzCjX_Q";
+const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
+const SUPABASE_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
 
 async function supabaseFetch(path, options = {}) {
   const res = await fetch(`${SUPABASE_URL}/rest/v1${path}`, {
@@ -221,7 +221,6 @@ export default function Admin() {
         </div>
       )}
 
-      {/* The centered white card — same width and centering as before, outer bg gone */}
       <div style={s.innerCard}>
         <div style={s.topRow}>
           <div>
@@ -294,7 +293,6 @@ export default function Admin() {
 }
 
 const s = {
-  // Transparent wrapper — no background, no extra width
   wrapper: {
     width: "100%",
     fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
@@ -305,17 +303,14 @@ const s = {
     borderRadius: 10, fontWeight: 600, zIndex: 200,
     boxShadow: "0 4px 20px rgba(0,0,0,0.25)",
   },
-
-  // The centered card — same size and centering as picture 1, outer bg removed
   innerCard: {
     background: "white",
     borderRadius: 20,
     padding: "32px",
-    maxWidth: 760,       // same as the original proportional width
-    margin: "0 auto",   // centered
+    maxWidth: 760,
+    margin: "0 auto",
     boxShadow: "0 20px 60px rgba(0,0,0,0.15)",
   },
-
   topRow: {
     display: "flex", justifyContent: "space-between",
     alignItems: "flex-start", marginBottom: 20,
