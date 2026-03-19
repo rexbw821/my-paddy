@@ -4,10 +4,6 @@ const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
 const SUPABASE_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
 
 async function supabaseFetch(path, options = {}) {
-  // Debug: log what we're fetching
-  console.log("📡 Fetching:", `${SUPABASE_URL}/rest/v1${path}`);
-  console.log("🔑 Key loaded:", SUPABASE_KEY ? "YES" : "NO — check your .env file!");
-
   const res = await fetch(`${SUPABASE_URL}/rest/v1${path}`, {
     headers: {
       apikey: SUPABASE_KEY,
@@ -18,18 +14,9 @@ async function supabaseFetch(path, options = {}) {
     },
     ...options,
   });
-
-  console.log("📬 Response status:", res.status);
-
   if (res.status === 204) return null;
-  if (!res.ok) {
-    const errText = await res.text();
-    console.error("❌ Supabase error:", errText);
-    throw new Error(errText);
-  }
-  const data = await res.json().catch(() => null);
-  console.log("✅ Data received:", data);
-  return data;
+  if (!res.ok) throw new Error(await res.text());
+  return res.json().catch(() => null);
 }
 
 async function deleteReport(id) {
@@ -67,8 +54,85 @@ function RiskBadge({ count }) {
   return <span style={s.riskLow}>🟢 Low Risk</span>;
 }
 
-function ReportCard({ report, onApprove, onReject, approving }) {
+// ── Evidence viewer ───────────────────────────────────────────────────────────
+function EvidenceSection({ reportId }) {
+  const [evidence, setEvidence] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [lightbox, setLightbox] = useState(null);
+
+  useEffect(() => {
+    const fetchEvidence = async () => {
+      try {
+        const data = await supabaseFetch(`/evidence?report_id=eq.${reportId}&select=*`);
+        setEvidence(data || []);
+      } catch (e) {
+        console.error("Evidence fetch error:", e.message);
+      } finally {
+        setLoading(false);
+      }
+    };
+    fetchEvidence();
+  }, [reportId]);
+
+  const isImage = (url) => /\.(jpg|jpeg|png|gif|webp)$/i.test(url);
+  const isPdf = (url) => /\.pdf$/i.test(url);
+
+  if (loading) return <div style={s.evidenceLoading}>Loading evidence…</div>;
+  if (!evidence.length) return null;
+
+  return (
+    <div style={s.evidenceSection}>
+      <div style={s.metaLabel}>
+        Evidence — {evidence.length} file{evidence.length !== 1 ? "s" : ""}
+      </div>
+      <div style={s.evidenceGrid}>
+        {evidence.map((item, i) => (
+          <div key={i} style={s.evidenceItem}>
+            {isImage(item.file_url) ? (
+              <div style={s.evidenceThumbWrap} onClick={() => setLightbox(item.file_url)}>
+                <img
+                  src={item.file_url}
+                  alt={`Evidence ${i + 1}`}
+                  style={s.evidenceThumb}
+                  onError={(e) => { e.target.style.display = "none"; }}
+                />
+                <div style={s.evidenceOverlay}>🔍 View</div>
+              </div>
+            ) : isPdf(item.file_url) ? (
+              <a href={item.file_url} target="_blank" rel="noopener noreferrer" style={s.evidencePdf}>
+                <span style={{ fontSize: "2rem" }}>📄</span>
+                <span style={s.evidencePdfLabel}>View PDF</span>
+              </a>
+            ) : (
+              <a href={item.file_url} target="_blank" rel="noopener noreferrer" style={s.evidencePdf}>
+                <span style={{ fontSize: "2rem" }}>📎</span>
+                <span style={s.evidencePdfLabel}>View File</span>
+              </a>
+            )}
+          </div>
+        ))}
+      </div>
+
+      {lightbox && (
+        <div style={s.lightboxOverlay} onClick={() => setLightbox(null)}>
+          <div style={s.lightboxContent} onClick={(e) => e.stopPropagation()}>
+            <button style={s.lightboxClose} onClick={() => setLightbox(null)}>✕</button>
+            <img src={lightbox} alt="Evidence" style={s.lightboxImg} />
+            <a href={lightbox} target="_blank" rel="noopener noreferrer" style={s.lightboxDownload}>
+              ⬇️ Open full size
+            </a>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Single report card ────────────────────────────────────────────────────────
+// hasEvidence is passed in from the parent — determined before rendering
+function ReportCard({ report, onApprove, onReject, approving, hasEvidence }) {
   const [expanded, setExpanded] = useState(false);
+  const [showEvidence, setShowEvidence] = useState(false);
   const desc = report.description || "";
 
   const target = report.business_name || report.phone_number || "Unknown";
@@ -85,6 +149,10 @@ function ReportCard({ report, onApprove, onReject, approving }) {
           <span style={report.status === "approved" ? s.approvedBadge : s.pendingBadge}>
             {report.status === "approved" ? "Approved" : "Pending"}
           </span>
+          {/* Small badge showing evidence exists */}
+          {hasEvidence && (
+            <span style={s.evidenceBadge}>📎 Has Evidence</span>
+          )}
         </div>
         <RiskBadge count={1} />
       </div>
@@ -126,6 +194,19 @@ function ReportCard({ report, onApprove, onReject, approving }) {
         {report.platform_handle && <span style={s.tag}>🔗 {report.platform_handle}</span>}
       </div>
 
+      {/* Only show the button if this report has evidence */}
+      {hasEvidence && (
+        <>
+          <button
+            style={s.evidenceToggleBtn}
+            onClick={() => setShowEvidence(!showEvidence)}
+          >
+            {showEvidence ? "🔼 Hide Evidence" : "🔽 View Evidence"}
+          </button>
+          {showEvidence && <EvidenceSection reportId={report.id} />}
+        </>
+      )}
+
       <div style={s.cardActions}>
         {report.status !== "approved" && (
           <button
@@ -148,8 +229,10 @@ function ReportCard({ report, onApprove, onReject, approving }) {
   );
 }
 
+// ── Main Admin component ──────────────────────────────────────────────────────
 export default function Admin() {
   const [reports, setReports] = useState([]);
+  const [evidenceReportIds, setEvidenceReportIds] = useState(new Set());
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [approvingId, setApprovingId] = useState(null);
@@ -166,12 +249,18 @@ export default function Admin() {
     setLoading(true);
     setError(null);
     try {
+      // Fetch reports
       let query = "/reports?order=created_at.desc";
       if (filter !== "all") query += `&status=eq.${filter}`;
       const data = await supabaseFetch(query);
       setReports(data || []);
+
+      // Fetch all distinct report_ids that have evidence — separate simple query
+      // This avoids needing a foreign key relationship
+      const evidenceData = await supabaseFetch("/evidence?select=report_id");
+      const ids = new Set((evidenceData || []).map((e) => e.report_id));
+      setEvidenceReportIds(ids);
     } catch (e) {
-      console.error("❌ fetchReports failed:", e.message);
       setError(e.message);
     } finally {
       setLoading(false);
@@ -227,9 +316,6 @@ export default function Admin() {
 
   const pendingCount = reports.filter((r) => r.status === "pending").length;
 
-  // Show env variable status clearly in the error box
-  const envMissing = !SUPABASE_URL || !SUPABASE_KEY;
-
   return (
     <div style={s.wrapper}>
       {toast && (
@@ -239,20 +325,6 @@ export default function Admin() {
       )}
 
       <div style={s.innerCard}>
-
-        {/* ── Env variable warning — shows if .env is not set up correctly ── */}
-        {envMissing && (
-          <div style={s.envWarning}>
-            <strong>⚠️ Environment variables missing!</strong>
-            <p style={{ marginTop: 6, fontSize: "0.85rem" }}>
-              Make sure your <code>frontend/.env</code> file has:<br />
-              <code>VITE_SUPABASE_URL=https://...</code><br />
-              <code>VITE_SUPABASE_ANON_KEY=eyJ...</code><br />
-              Then restart your dev server.
-            </p>
-          </div>
-        )}
-
         <div style={s.topRow}>
           <div>
             <h2 style={s.title}>Reports Dashboard</h2>
@@ -297,30 +369,13 @@ export default function Admin() {
           </div>
         ) : error ? (
           <div style={s.errorBox}>
-            <p style={{ fontWeight: 700 }}>⚠️ Failed to load reports</p>
-            <p style={{ fontSize: "0.85rem", marginTop: 6, wordBreak: "break-all" }}>{error}</p>
-            {error.includes("JWSError") || error.includes("invalid") ? (
-              <p style={{ fontSize: "0.8rem", marginTop: 8, color: "#7f1d1d" }}>
-                💡 Your Supabase key looks invalid. Check <code>VITE_SUPABASE_ANON_KEY</code> in your .env
-              </p>
-            ) : error.includes("relation") || error.includes("does not exist") ? (
-              <p style={{ fontSize: "0.8rem", marginTop: 8, color: "#7f1d1d" }}>
-                💡 Table not found. Make sure the table is named <code>reports</code> in Supabase
-              </p>
-            ) : error.includes("policy") || error.includes("row-level") ? (
-              <p style={{ fontSize: "0.8rem", marginTop: 8, color: "#7f1d1d" }}>
-                💡 RLS is blocking this. Add a SELECT policy for anon role in Supabase
-              </p>
-            ) : null}
+            <p>⚠️ {error}</p>
             <button style={s.retryBtn} onClick={fetchReports}>Retry</button>
           </div>
         ) : filtered.length === 0 ? (
           <div style={s.center}>
             <div style={{ fontSize: "3.5rem" }}>📭</div>
             <p style={{ color: "#6b7280", marginTop: 10 }}>No reports found</p>
-            <p style={{ color: "#9ca3af", fontSize: "0.8rem", marginTop: 4 }}>
-              {filter === "pending" ? "No pending reports right now" : `No ${filter} reports found`}
-            </p>
           </div>
         ) : (
           <div style={s.list}>
@@ -331,6 +386,7 @@ export default function Admin() {
                 onApprove={handleApprove}
                 onReject={handleReject}
                 approving={approvingId === report.id}
+                hasEvidence={evidenceReportIds.has(report.id)}
               />
             ))}
           </div>
@@ -340,6 +396,7 @@ export default function Admin() {
   );
 }
 
+// ── Styles ────────────────────────────────────────────────────────────────────
 const s = {
   wrapper: {
     width: "100%",
@@ -352,17 +409,9 @@ const s = {
     boxShadow: "0 4px 20px rgba(0,0,0,0.25)",
   },
   innerCard: {
-    background: "white",
-    borderRadius: 20,
-    padding: "32px",
-    maxWidth: 760,
-    margin: "0 auto",
-    boxShadow: "0 20px 60px rgba(0,0,0,0.15)",
-  },
-  envWarning: {
-    background: "#fffbeb", border: "1px solid #f59e0b",
-    borderRadius: 10, padding: "14px 16px", marginBottom: 20,
-    color: "#92400e", fontSize: "0.9rem",
+    background: "white", borderRadius: 20,
+    padding: "32px", maxWidth: 760,
+    margin: "0 auto", boxShadow: "0 20px 60px rgba(0,0,0,0.15)",
   },
   topRow: {
     display: "flex", justifyContent: "space-between",
@@ -421,20 +470,71 @@ const s = {
     fontWeight: 700, padding: "3px 10px", borderRadius: 20,
     textTransform: "uppercase", letterSpacing: 0.5,
   },
+  evidenceBadge: {
+    background: "#eff6ff", color: "#1d4ed8", fontSize: "0.72rem",
+    fontWeight: 700, padding: "3px 10px", borderRadius: 20,
+  },
   riskHigh: { background: "#fee2e2", color: "#991b1b", fontSize: "0.78rem", fontWeight: 700, padding: "4px 10px", borderRadius: 20 },
   riskMed:  { background: "#fef3c7", color: "#92400e", fontSize: "0.78rem", fontWeight: 700, padding: "4px 10px", borderRadius: 20 },
   riskLow:  { background: "#dcfce7", color: "#166534", fontSize: "0.78rem", fontWeight: 700, padding: "4px 10px", borderRadius: 20 },
   metaGrid: { display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12, marginBottom: 14 },
-  metaLabel: { fontSize: "0.72rem", color: "#9ca3af", fontWeight: 600, marginBottom: 2, textTransform: "uppercase" },
+  metaLabel: { fontSize: "0.72rem", color: "#9ca3af", fontWeight: 600, marginBottom: 6, textTransform: "uppercase" },
   metaValue: { fontSize: "0.9rem", color: "#374151", fontWeight: 500 },
   descBox: {
     background: "white", border: "1px solid #e5e7eb",
     borderRadius: 10, padding: "12px 14px", marginBottom: 12,
   },
   readMoreBtn: { background: "none", border: "none", color: "#667eea", fontWeight: 600, fontSize: "0.85rem", padding: 0, cursor: "pointer" },
-  tags: { display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 14 },
+  tags: { display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 12 },
   tag: { background: "#ede9fe", color: "#5b21b6", padding: "4px 12px", borderRadius: 20, fontSize: "0.78rem", fontWeight: 500 },
-  cardActions: { display: "flex", gap: 10, justifyContent: "flex-end" },
+  evidenceToggleBtn: {
+    background: "#eff6ff", border: "1px solid #bfdbfe",
+    color: "#1d4ed8", borderRadius: 8,
+    padding: "7px 14px", fontSize: "0.82rem",
+    fontWeight: 600, cursor: "pointer",
+    marginBottom: 10, width: "100%", textAlign: "left",
+  },
+  evidenceSection: { marginBottom: 12 },
+  evidenceLoading: { color: "#9ca3af", fontSize: "0.85rem", padding: "8px 0" },
+  evidenceGrid: { display: "flex", gap: 10, flexWrap: "wrap", marginTop: 8 },
+  evidenceItem: { position: "relative" },
+  evidenceThumbWrap: {
+    width: 90, height: 90, borderRadius: 10,
+    overflow: "hidden", cursor: "pointer",
+    position: "relative", border: "2px solid #e5e7eb",
+  },
+  evidenceThumb: { width: "100%", height: "100%", objectFit: "cover" },
+  evidenceOverlay: {
+    position: "absolute", inset: 0,
+    background: "rgba(0,0,0,0.4)", color: "white",
+    fontSize: "0.75rem", fontWeight: 700,
+    display: "flex", alignItems: "center", justifyContent: "center",
+  },
+  evidencePdf: {
+    display: "flex", flexDirection: "column",
+    alignItems: "center", justifyContent: "center",
+    width: 90, height: 90, borderRadius: 10,
+    border: "2px solid #e5e7eb", background: "#fef2f2",
+    textDecoration: "none", gap: 4,
+  },
+  evidencePdfLabel: { fontSize: "0.7rem", color: "#dc2626", fontWeight: 600 },
+  lightboxOverlay: {
+    position: "fixed", inset: 0,
+    background: "rgba(0,0,0,0.85)", zIndex: 999,
+    display: "flex", alignItems: "center", justifyContent: "center",
+  },
+  lightboxContent: {
+    position: "relative", maxWidth: "90vw", maxHeight: "90vh",
+    display: "flex", flexDirection: "column", alignItems: "center", gap: 12,
+  },
+  lightboxImg: { maxWidth: "90vw", maxHeight: "80vh", borderRadius: 12, objectFit: "contain" },
+  lightboxClose: {
+    position: "absolute", top: -16, right: -16,
+    background: "white", border: "none", borderRadius: "50%",
+    width: 32, height: 32, fontWeight: 700, cursor: "pointer", fontSize: "1rem", zIndex: 1000,
+  },
+  lightboxDownload: { color: "white", fontSize: "0.85rem", fontWeight: 600, textDecoration: "none" },
+  cardActions: { display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 4 },
   approveBtn: {
     background: "linear-gradient(135deg, #22c55e, #16a34a)",
     color: "white", border: "none", borderRadius: 10,
@@ -455,7 +555,7 @@ const s = {
     borderRadius: 12, padding: "24px", textAlign: "center", color: "#dc2626",
   },
   retryBtn: {
-    marginTop: 12, background: "#667eea", color: "white",
+    marginTop: 10, background: "#667eea", color: "white",
     border: "none", borderRadius: 8, padding: "8px 20px", fontWeight: 600, cursor: "pointer",
   },
 };
