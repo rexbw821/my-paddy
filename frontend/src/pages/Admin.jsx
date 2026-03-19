@@ -4,6 +4,10 @@ const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
 const SUPABASE_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
 
 async function supabaseFetch(path, options = {}) {
+  // Debug: log what we're fetching
+  console.log("📡 Fetching:", `${SUPABASE_URL}/rest/v1${path}`);
+  console.log("🔑 Key loaded:", SUPABASE_KEY ? "YES" : "NO — check your .env file!");
+
   const res = await fetch(`${SUPABASE_URL}/rest/v1${path}`, {
     headers: {
       apikey: SUPABASE_KEY,
@@ -14,9 +18,18 @@ async function supabaseFetch(path, options = {}) {
     },
     ...options,
   });
+
+  console.log("📬 Response status:", res.status);
+
   if (res.status === 204) return null;
-  if (!res.ok) throw new Error(await res.text());
-  return res.json().catch(() => null);
+  if (!res.ok) {
+    const errText = await res.text();
+    console.error("❌ Supabase error:", errText);
+    throw new Error(errText);
+  }
+  const data = await res.json().catch(() => null);
+  console.log("✅ Data received:", data);
+  return data;
 }
 
 async function deleteReport(id) {
@@ -158,6 +171,7 @@ export default function Admin() {
       const data = await supabaseFetch(query);
       setReports(data || []);
     } catch (e) {
+      console.error("❌ fetchReports failed:", e.message);
       setError(e.message);
     } finally {
       setLoading(false);
@@ -213,6 +227,9 @@ export default function Admin() {
 
   const pendingCount = reports.filter((r) => r.status === "pending").length;
 
+  // Show env variable status clearly in the error box
+  const envMissing = !SUPABASE_URL || !SUPABASE_KEY;
+
   return (
     <div style={s.wrapper}>
       {toast && (
@@ -222,6 +239,20 @@ export default function Admin() {
       )}
 
       <div style={s.innerCard}>
+
+        {/* ── Env variable warning — shows if .env is not set up correctly ── */}
+        {envMissing && (
+          <div style={s.envWarning}>
+            <strong>⚠️ Environment variables missing!</strong>
+            <p style={{ marginTop: 6, fontSize: "0.85rem" }}>
+              Make sure your <code>frontend/.env</code> file has:<br />
+              <code>VITE_SUPABASE_URL=https://...</code><br />
+              <code>VITE_SUPABASE_ANON_KEY=eyJ...</code><br />
+              Then restart your dev server.
+            </p>
+          </div>
+        )}
+
         <div style={s.topRow}>
           <div>
             <h2 style={s.title}>Reports Dashboard</h2>
@@ -266,13 +297,30 @@ export default function Admin() {
           </div>
         ) : error ? (
           <div style={s.errorBox}>
-            <p>⚠️ {error}</p>
+            <p style={{ fontWeight: 700 }}>⚠️ Failed to load reports</p>
+            <p style={{ fontSize: "0.85rem", marginTop: 6, wordBreak: "break-all" }}>{error}</p>
+            {error.includes("JWSError") || error.includes("invalid") ? (
+              <p style={{ fontSize: "0.8rem", marginTop: 8, color: "#7f1d1d" }}>
+                💡 Your Supabase key looks invalid. Check <code>VITE_SUPABASE_ANON_KEY</code> in your .env
+              </p>
+            ) : error.includes("relation") || error.includes("does not exist") ? (
+              <p style={{ fontSize: "0.8rem", marginTop: 8, color: "#7f1d1d" }}>
+                💡 Table not found. Make sure the table is named <code>reports</code> in Supabase
+              </p>
+            ) : error.includes("policy") || error.includes("row-level") ? (
+              <p style={{ fontSize: "0.8rem", marginTop: 8, color: "#7f1d1d" }}>
+                💡 RLS is blocking this. Add a SELECT policy for anon role in Supabase
+              </p>
+            ) : null}
             <button style={s.retryBtn} onClick={fetchReports}>Retry</button>
           </div>
         ) : filtered.length === 0 ? (
           <div style={s.center}>
             <div style={{ fontSize: "3.5rem" }}>📭</div>
             <p style={{ color: "#6b7280", marginTop: 10 }}>No reports found</p>
+            <p style={{ color: "#9ca3af", fontSize: "0.8rem", marginTop: 4 }}>
+              {filter === "pending" ? "No pending reports right now" : `No ${filter} reports found`}
+            </p>
           </div>
         ) : (
           <div style={s.list}>
@@ -310,6 +358,11 @@ const s = {
     maxWidth: 760,
     margin: "0 auto",
     boxShadow: "0 20px 60px rgba(0,0,0,0.15)",
+  },
+  envWarning: {
+    background: "#fffbeb", border: "1px solid #f59e0b",
+    borderRadius: 10, padding: "14px 16px", marginBottom: 20,
+    color: "#92400e", fontSize: "0.9rem",
   },
   topRow: {
     display: "flex", justifyContent: "space-between",
@@ -402,7 +455,7 @@ const s = {
     borderRadius: 12, padding: "24px", textAlign: "center", color: "#dc2626",
   },
   retryBtn: {
-    marginTop: 10, background: "#667eea", color: "white",
+    marginTop: 12, background: "#667eea", color: "white",
     border: "none", borderRadius: 8, padding: "8px 20px", fontWeight: 600, cursor: "pointer",
   },
 };
